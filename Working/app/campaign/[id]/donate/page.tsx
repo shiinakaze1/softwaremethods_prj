@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { HandHeart, Loader2 } from "lucide-react"
+import { HandHeart, Loader2, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -30,6 +30,21 @@ export default function DonatePage({
   const [isAnonymous, setIsAnonymous] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
+  const [campaignLocked, setCampaignLocked] = useState(false)
+  const [campaignTitle, setCampaignTitle] = useState("")
+  const [statusLoading, setStatusLoading] = useState(true)
+
+  // Check campaign lock status
+  useEffect(() => {
+    fetch(`/api/campaigns/${id}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === "locked") setCampaignLocked(true)
+        if (data.title) setCampaignTitle(data.title)
+      })
+      .catch(() => {})
+      .finally(() => setStatusLoading(false))
+  }, [id])
 
   // Pre-fill from session
   useEffect(() => {
@@ -74,6 +89,41 @@ export default function DonatePage({
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (statusLoading) {
+    return (
+      <main className="min-h-screen bg-muted/30 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </main>
+    )
+  }
+
+  if (campaignLocked) {
+    return (
+      <main className="min-h-screen bg-muted/30 flex items-start justify-center px-4 py-12">
+        <Card className="w-full max-w-lg shadow-lg">
+          <CardHeader className="text-center pb-4">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+              <Lock className="h-6 w-6 text-destructive" />
+            </div>
+            <CardTitle className="text-2xl">Campaign Locked</CardTitle>
+            <CardDescription>
+              {campaignTitle ? `"${campaignTitle}" is` : "This campaign is"} no longer accepting donations.
+              It has been flagged and locked by an administrator.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center">
+            <button
+              onClick={() => router.back()}
+              className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Go back
+            </button>
+          </CardContent>
+        </Card>
+      </main>
+    )
   }
 
   return (

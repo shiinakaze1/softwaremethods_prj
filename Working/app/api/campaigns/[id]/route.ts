@@ -14,6 +14,8 @@ export async function GET(
       raisedAmount: true,
       targetAmount: true,
       donorCount: true,
+      status: true,
+      title: true,
     },
   });
 

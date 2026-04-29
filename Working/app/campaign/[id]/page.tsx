@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
+import { Lock } from "lucide-react";
 import { LiveCampaignProgress } from "@/components/campaigns/live-campaign-progress";
 import { ShareCampaignButton } from "@/components/campaigns/share-campaign-button";
 
@@ -87,12 +88,24 @@ export default async function CampaignDetailsPage({
 
       <ShareCampaignButton campaignId={campaign.id} campaignTitle={campaign.title} />
 
-      <Link
-        href={`/campaign/${campaign.id}/donate`}
-        className="inline-block bg-blue-600 text-white px-6 py-3 rounded"
-      >
-        Donate Now
-      </Link>
+      {campaign.status === "locked" ? (
+        <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-5 py-4 text-destructive">
+          <Lock className="h-5 w-5 shrink-0" />
+          <div>
+            <p className="font-semibold">This campaign has been locked</p>
+            <p className="text-sm opacity-80">
+              This campaign has been flagged and is no longer accepting donations.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <Link
+          href={`/campaign/${campaign.id}/donate`}
+          className="inline-block bg-blue-600 text-white px-6 py-3 rounded"
+        >
+          Donate Now
+        </Link>
+      )}
     </main>
   );
 }

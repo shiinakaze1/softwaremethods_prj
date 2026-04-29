@@ -14,6 +14,7 @@ import {
   Calendar,
   ShieldAlert,
   Lock,
+  Unlock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -90,6 +91,9 @@ export default function CampaignReviewPage() {
   const [lockTarget, setLockTarget] = useState<CampaignReview | null>(null)
   const [lockReason, setLockReason] = useState("")
   const [isLocking, setIsLocking] = useState(false)
+  const [unlockDialogOpen, setUnlockDialogOpen] = useState(false)
+  const [unlockTarget, setUnlockTarget] = useState<CampaignReview | null>(null)
+  const [isUnlocking, setIsUnlocking] = useState(false)
 
   useEffect(() => {
     fetch('/api/admin/campaigns')
@@ -171,6 +175,29 @@ export default function CampaignReviewPage() {
     setLockDialogOpen(false)
     setLockTarget(null)
     setLockReason("")
+  }
+
+  const handleUnlock = (review: CampaignReview) => {
+    setUnlockTarget(review)
+    setUnlockDialogOpen(true)
+  }
+
+  const confirmUnlock = async () => {
+    if (!unlockTarget) return
+    setIsUnlocking(true)
+    await fetch('/api/admin/campaigns', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaignId: unlockTarget.campaignId, status: 'active' }),
+    })
+    setReviews((prev) =>
+      prev.map((r) =>
+        r.id === unlockTarget.id ? { ...r, status: 'active' as unknown as ReviewStatus } : r
+      )
+    )
+    setIsUnlocking(false)
+    setUnlockDialogOpen(false)
+    setUnlockTarget(null)
   }
 
   const getActionDialogContent = () => {
@@ -338,7 +365,7 @@ export default function CampaignReviewPage() {
                             </Button>
                           </>
                         )}
-                        {review.status === 'active' && (
+                        {(review.status as string) === 'active' && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -347,6 +374,17 @@ export default function CampaignReviewPage() {
                             onClick={() => handleLock(review)}
                           >
                             <Lock className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {(review.status as string) === 'locked' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-green-600"
+                            title="Unlock campaign"
+                            onClick={() => handleUnlock(review)}
+                          >
+                            <Unlock className="h-4 w-4" />
                           </Button>
                         )}
                       </div>
@@ -528,6 +566,32 @@ export default function CampaignReviewPage() {
               className={dialogContent.danger ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}
             >
               {dialogContent.buttonLabel}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Unlock Campaign Dialog */}
+      <AlertDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Unlock className="h-5 w-5 text-green-600" />
+              Unlock Campaign?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{unlockTarget?.campaignTitle}</strong> will be set back to active and will
+              resume accepting donations immediately.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isUnlocking}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmUnlock}
+              disabled={isUnlocking}
+              className="bg-green-600 text-white hover:bg-green-700"
+            >
+              {isUnlocking ? 'Unlocking...' : 'Unlock Campaign'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
