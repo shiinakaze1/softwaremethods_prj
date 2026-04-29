@@ -34,7 +34,7 @@ export interface EmailLogSummary {
 const RULE_LABELS: Record<EmailTriggerKey, string> = {
   thank_you: "Thank-you email",
   milestone: "Milestone email",
-  fundraiser_coaching: "Coaching email",
+  new_donation_alert: "New donation alert",
   manual_update: "Manual campaign update",
 }
 

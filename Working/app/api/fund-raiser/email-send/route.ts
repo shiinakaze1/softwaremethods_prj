@@ -17,7 +17,7 @@ const VALID_TRIGGER_KEYS = new Set([
   "manual_update",
   "thank_you",
   "milestone",
-  "fundraiser_coaching",
+  "new_donation_alert",
 ])
 
 function normaliseRecipients(input: unknown): string[] {
@@ -88,8 +88,8 @@ function mapTriggerKeyToTriggerTypes(triggerKey: string | null): string[] {
       return ["donation_received", "thank_you"]
     case "milestone":
       return ["milestone_50", "milestone"]
-    case "fundraiser_coaching":
-      return ["fundraiser_coaching"]
+    case "new_donation_alert":
+      return ["new_donation_alert", "donation_alert"]
     default:
       return []
   }

@@ -36,8 +36,9 @@ function normaliseRuleKey(triggerType: string | null | undefined): EmailTriggerK
     case 'milestone':
     case 'milestone_50':
       return 'milestone'
-    case 'fundraiser_coaching':
-      return 'fundraiser_coaching'
+    case 'new_donation_alert':
+    case 'donation_alert':
+      return 'new_donation_alert'
     default:
       return null
   }
@@ -51,9 +52,9 @@ function toTriggerType(ruleKey: EmailTriggerKey): string {
       return 'donation_received'
     case 'milestone':
       return 'milestone_50'
-    case 'fundraiser_coaching':
+    case 'new_donation_alert':
     default:
-      return 'fundraiser_coaching'
+      return 'new_donation_alert'
   }
 }
 

@@ -36,8 +36,8 @@ async function main() {
     data: {
       email: 'admin@fundbridge.com',
       password: adminPassword,
-      firstName: 'Admin',
-      lastName: 'User',
+      firstName: 'Super',
+      lastName: 'Admin',
       role: 'admin',
       isVerified: true,
       status: 'active',

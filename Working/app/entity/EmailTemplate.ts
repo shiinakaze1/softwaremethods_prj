@@ -76,7 +76,7 @@ export function createDefaultEmailTemplates(): EmailTemplateSummary[] {
       description: "Automatic campaign update email template for supporter updates.",
       subjectTemplate: "Campaign update: {{campaignTitle}}",
       bodyTemplate:
-        "Hello,\n\nThank you for supporting {{campaignTitle}}.\n\nWe’ve just shared a new campaign update.\n\n{{campaignUpdateTitle}}\n\n{{campaignUpdateContent}}\n\nSo far, the campaign has raised {{raisedAmount}} out of {{targetAmount}}, with support from {{donorCount}} supporters.\n\nWe truly appreciate your support and will continue to keep you updated.\n\nWarm regards,\n{{fundRaiserName}}",
+        "Hi there,\n\nWe wanted to share a quick update on {{campaignTitle}}. The campaign has currently raised {{raisedAmount}} out of {{targetAmount}}, and every show of support continues to move us closer to the goal.\n\nThank you for staying involved and for helping us keep this momentum going.",
     },
     {
       id: "template-thank-you",
@@ -97,13 +97,13 @@ export function createDefaultEmailTemplates(): EmailTemplateSummary[] {
         "Hi there,\n\nWe are excited to share that {{campaignTitle}} has now reached {{milestonePercent}}% of its target. This progress would not be possible without the support of our community.\n\nThank you for helping us get this far. We hope you will continue sharing and supporting the campaign as we work toward the next milestone.",
     },
     {
-      id: "template-coaching",
-      ruleKey: "fundraiser_coaching",
-      label: "Fundraising coaching prompts",
-      description: "Automatic coaching prompts sent to the fund raiser.",
-      subjectTemplate: "Coaching prompt for {{campaignTitle}}",
+      id: "template-new-donation-alert",
+      ruleKey: "new_donation_alert",
+      label: "New donation alert",
+      description: "Automatic new donation alert sent to the fund raiser.",
+      subjectTemplate: "New donation received for {{campaignTitle}}",
       bodyTemplate:
-        "Hello {{fundRaiserName}},\n\nYour campaign {{campaignTitle}} currently has {{donorCount}} supporters and has raised {{raisedAmount}} out of {{targetAmount}}. Consider posting a fresh update, resharing the campaign with recent supporters, or thanking repeat donors directly.\n\nSmall, timely updates often help keep campaign momentum moving.",
+        "Hello {{fundRaiserName}},\n\nA new donation has just been received for {{campaignTitle}}. The campaign has currently raised {{raisedAmount}} out of {{targetAmount}}, with support from {{donorCount}} supporters so far.\n\nLog in to FundBridge to view the latest campaign activity and keep the momentum going.",
     },
   ]
 }

@@ -114,12 +114,6 @@ interface SendEmailRoutePayload {
   useConfiguredSenderAsRecipient?: boolean
 }
 
-export interface CampaignUpdateTemplateContext {
-  title?: string
-  content?: string
-  createdAt?: string
-}
-
 export interface EmailDeliveryResult {
   log: EmailLogSummary
   deliveredCount: number
@@ -170,12 +164,12 @@ export class EmailAutomationController {
         isEnabled: true,
       }).toSummary(),
       new EmailAutomationRule({
-        id: "rule-coaching",
-        key: "fundraiser_coaching",
-        label: "Fundraising coaching prompts",
-        description: "Automatically send a coaching prompt when campaign momentum has slowed.",
+        id: "rule-new-donation-alert",
+        key: "new_donation_alert",
+        label: "New donation alert",
+        description: "Automatically send a notification to the fund raiser when a completed donation is received.",
         audience: "fund_raiser",
-        isEnabled: false,
+        isEnabled: true,
       }).toSummary(),
     ]
   }
@@ -247,9 +241,7 @@ export class EmailAutomationController {
         audiencePreview: this.buildWorkflowAudiencePreview(rule.key, fundRaiserCampaigns, selectedCampaignId, fundRaiserUser),
         triggerSummary: this.buildWorkflowTriggerSummary(rule.key, fundRaiserCampaigns, selectedCampaignId, logs, fundRaiserUser),
       })),
-      logs: [...logs]
-        .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
-        .slice(0, 12),
+      logs: [...logs].sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()),
       stats: this.buildStats(logs, rules),
       suggestedCampaignId: selectedCampaignId,
       selectedSegment,
@@ -272,7 +264,7 @@ export class EmailAutomationController {
     const replacements = this.buildTemplateReplacements(
       input.fundRaiserUser,
       input.campaign,
-      input.ruleKey === "fundraiser_coaching" ? undefined : input.selectedSegment
+      input.ruleKey === "new_donation_alert" ? undefined : input.selectedSegment
     )
     const subject = template.renderSubject(replacements)
     const body = template.renderBody(replacements)
@@ -414,7 +406,7 @@ export class EmailAutomationController {
     return new EmailLog({
       id: `workflow-${input.ruleKey}-${input.deliveryMode}-${Date.now()}`,
       ruleKey: input.ruleKey,
-      recipientType: input.ruleKey === "fundraiser_coaching" ? "fund_raiser" : "donor",
+      recipientType: input.ruleKey === "new_donation_alert" ? "fund_raiser" : "donor",
       recipientName: `${audiencePreview.label} (${audiencePreview.recipientsWithEmailCount}/${audiencePreview.recipientCount} emails)`,
       subject,
       status,
@@ -621,11 +613,11 @@ export class EmailAutomationController {
     selectedCampaignId?: string,
     fundRaiserUser?: User
   ): WorkflowAudiencePreview {
-    if (ruleKey === "fundraiser_coaching") {
+    if (ruleKey === "new_donation_alert") {
       const resolvedFundRaiserUser = fundRaiserUser ?? this.users.find((user) => user.id === fundRaiserCampaigns[0]?.organiser.id)
       return {
         label: resolvedFundRaiserUser?.displayName || "Fund raiser",
-        description: "This workflow sends coaching prompts to the logged-in fund raiser account.",
+        description: "This workflow sends a new donation alert to the logged-in fund raiser account.",
         recipientType: "fund_raiser",
         recipientCount: resolvedFundRaiserUser ? 1 : 0,
         recipientsWithEmailCount: resolvedFundRaiserUser?.email ? 1 : 0,
@@ -668,7 +660,7 @@ export class EmailAutomationController {
       : fundRaiserCampaigns[0]
     const audiencePreview = this.buildWorkflowAudiencePreview(ruleKey, fundRaiserCampaigns, selectedCampaignId, fundRaiserUser)
 
-    if (!campaign && ruleKey !== "fundraiser_coaching") {
+    if (!campaign) {
       return new EmailWorkflowTrigger({
         ruleKey,
         triggeredWhen: "Choose a campaign to evaluate this workflow.",
@@ -749,26 +741,23 @@ export class EmailAutomationController {
       }).toSummary()
     }
 
-    const latestSupporterActivityAt = this.getLatestSupporterActivityTimestamp(campaign)
-    const staleThresholdMs = 7 * 24 * 60 * 60 * 1000
-    const daysSinceActivity = latestSupporterActivityAt
-      ? Math.floor((Date.now() - latestSupporterActivityAt) / (24 * 60 * 60 * 1000))
-      : undefined
-    const ready = Boolean(latestSupporterActivityAt && Date.now() - latestSupporterActivityAt >= staleThresholdMs)
+    const latestDonation = this.getLatestCompletedDonation(campaign?.id)
+    const latestSent = this.getLatestSentLogTimestamp(logs, "new_donation_alert", campaign?.id)
+    const ready = Boolean(latestDonation && (!latestSent || new Date(latestDonation.createdAt).getTime() > latestSent))
 
     return new EmailWorkflowTrigger({
       ruleKey,
-      triggeredWhen: "When a campaign has gone 7 days without a donation or a fresh campaign update.",
+      triggeredWhen: "When a donor completes a donation.",
       status: ready ? "armed" : campaign ? "watching" : "inactive",
       statusReason: ready
-        ? `This campaign has been quiet for ${daysSinceActivity} days, so a coaching prompt is ready.`
-        : latestSupporterActivityAt
-          ? `Recent campaign activity was detected ${daysSinceActivity} day${daysSinceActivity === 1 ? "" : "s"} ago.`
-          : "There is not enough campaign activity history yet to trigger coaching.",
+        ? "A completed donation was received and the fund raiser alert has not been sent yet."
+        : latestDonation
+          ? "The latest completed donation already has a sent fund raiser alert recorded."
+          : "No completed donations have been recorded for this campaign yet.",
       recipientCount: audiencePreview.recipientCount,
       recipientsWithEmailCount: audiencePreview.recipientsWithEmailCount,
-      eventLabel: latestSupporterActivityAt ? "Latest donation or update activity" : undefined,
-      eventAt: latestSupporterActivityAt ? new Date(latestSupporterActivityAt).toISOString() : undefined,
+      eventLabel: latestDonation ? `${latestDonation.donorName} donated` : undefined,
+      eventAt: latestDonation?.createdAt,
     }).toSummary()
   }
 
@@ -913,7 +902,7 @@ export class EmailAutomationController {
     campaign: Campaign | undefined,
     fundRaiserUser: User
   ): string[] {
-    if (ruleKey === "fundraiser_coaching") {
+    if (ruleKey === "new_donation_alert") {
       return fundRaiserUser.email ? [fundRaiserUser.email] : []
     }
 
@@ -984,7 +973,7 @@ export class EmailAutomationController {
       throw new Error("There are no recipient email addresses available for this action.")
     }
 
-    const response = await fetch("/api/fund-raiser/email-send", {
+    const response = await fetch("/api/emails/send", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1016,37 +1005,16 @@ export class EmailAutomationController {
     }
   }
 
-  buildWorkflowTemplateReplacements(input: {
-    fundRaiserUser: User
-    campaign?: Campaign
-    selectedSegment?: EmailSegmentAudienceSummary
-    fallbackRecipientLabel?: string
-    campaignUpdate?: CampaignUpdateTemplateContext
-  }): Record<string, string | number | undefined> {
-    return this.buildTemplateReplacements(
-      input.fundRaiserUser,
-      input.campaign,
-      input.selectedSegment,
-      input.fallbackRecipientLabel,
-      input.campaignUpdate
-    )
-  }
-
   private buildTemplateReplacements(
     fundRaiserUser: User,
     campaign?: Campaign,
     selectedSegment?: EmailSegmentAudienceSummary,
-    fallbackRecipientLabel?: string,
-    campaignUpdate?: CampaignUpdateTemplateContext
+    fallbackRecipientLabel?: string
   ): Record<string, string | number | undefined> {
     const milestonePercent =
       campaign && campaign.targetAmount > 0
         ? Math.round((campaign.raisedAmount / campaign.targetAmount) * 100)
         : undefined
-
-    const campaignUpdateDate = campaignUpdate?.createdAt
-      ? new Date(campaignUpdate.createdAt).toLocaleString()
-      : undefined
 
     return {
       campaignTitle: campaign?.title,
@@ -1056,9 +1024,6 @@ export class EmailAutomationController {
       recipientLabel: selectedSegment?.label || fallbackRecipientLabel || "supporters",
       milestonePercent,
       fundRaiserName: fundRaiserUser.displayName,
-      campaignUpdateTitle: campaignUpdate?.title,
-      campaignUpdateContent: campaignUpdate?.content,
-      campaignUpdateDate,
     }
   }
 

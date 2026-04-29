@@ -1,7 +1,7 @@
 export type EmailTriggerKey =
   | "thank_you"
   | "milestone"
-  | "fundraiser_coaching"
+  | "new_donation_alert"
   | "manual_update"
 
 export type EmailAudience = "donor" | "fund_raiser"

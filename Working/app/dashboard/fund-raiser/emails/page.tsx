@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import {
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Mail,
   MessageSquareHeart,
   PencilLine,
+  RefreshCw,
   Save,
   Send,
   Sparkles,
@@ -34,6 +35,16 @@ import type { EmailLogSummary } from "@/app/entity/EmailLog"
 import type { EmailTemplateSummary } from "@/app/entity/EmailTemplate"
 import type { Campaign, Donation, User } from "@/lib/types"
 
+type EmailLogsMeta = {
+  page: number
+  pageSize: number
+  totalCount: number
+  totalPages: number
+  status: string
+  sort: "newest" | "oldest"
+  campaignId: string
+}
+
 type FundRaiserEmailsResponse = {
   currentUser: User
   campaigns: Campaign[]
@@ -42,6 +53,7 @@ type FundRaiserEmailsResponse = {
   rules: EmailAutomationRuleSummary[]
   templates: EmailTemplateSummary[]
   logs: EmailLogSummary[]
+  logsMeta?: EmailLogsMeta
 }
 
 type GroupedEmailActivity = {
@@ -79,7 +91,8 @@ const emailPurposeOptions: Array<{ value: EmailDraftPurpose; label: string }> = 
   { value: "re_engagement", label: "Re-engagement" },
   { value: "custom", label: "Custom purpose" },
 ]
-const workflowOrder: EmailTriggerKey[] = ["manual_update", "thank_you", "milestone", "fundraiser_coaching"]
+const workflowOrder: EmailTriggerKey[] = ["manual_update", "thank_you", "milestone", "new_donation_alert"]
+const ACTIVITY_PAGE_SIZE = 10
 
 function formatDateTime(value?: string) {
   if (!value) return "No event timestamp"
@@ -169,8 +182,19 @@ export default function FundRaiserEmailsPage() {
   const [activityStatusFilter, setActivityStatusFilter] = useState<"all" | EmailLogSummary["status"]>("all")
   const [activityCampaignFilter, setActivityCampaignFilter] = useState<string>("all")
   const [activitySortOrder, setActivitySortOrder] = useState<"newest" | "oldest">("newest")
-  const [visibleActivityGroups, setVisibleActivityGroups] = useState(10)
+  const [activityPage, setActivityPage] = useState(1)
+  const [activityMeta, setActivityMeta] = useState<EmailLogsMeta>({
+    page: 1,
+    pageSize: ACTIVITY_PAGE_SIZE,
+    totalCount: 0,
+    totalPages: 1,
+    status: "all",
+    sort: "newest",
+    campaignId: "all",
+  })
+  const [isRefreshingActivity, setIsRefreshingActivity] = useState(false)
   const [expandedActivityRows, setExpandedActivityRows] = useState<string[]>([])
+  const hasLoadedEmailDataRef = useRef(false)
 
   const [templateSaveState, setTemplateSaveState] = useState<{
     type: "idle" | "dirty" | "saving" | "saved" | "error"
@@ -187,7 +211,6 @@ export default function FundRaiserEmailsPage() {
     type: "idle",
     message: "",
   })
-  const [visibleActivityCount, setVisibleActivityCount] = useState(10)
 
   const emailAutomationController = useMemo(
     () => new EmailAutomationController(campaignsData, donationsData, directoryUsers),
@@ -196,44 +219,87 @@ export default function FundRaiserEmailsPage() {
 
   const resolvedFundRaiserUser = currentFundRaiserUser || fallbackFundRaiserUser
 
-  const refreshEmailsDashboard = useCallback(async () => {
-    setIsLoadingEmailData(true)
-    setEmailDataError("")
-
-    try {
-      const response = await fetch("/api/fund-raiser/emails", {
-        method: "GET",
-        cache: "no-store",
+  const refreshEmailsDashboard = useCallback(
+    async (options?: { page?: number; activityOnly?: boolean; showToast?: boolean }) => {
+      const requestedPage = options?.page ?? activityPage
+      const activityOnly = options?.activityOnly ?? hasLoadedEmailDataRef.current
+      const params = new URLSearchParams({
+        logsPage: String(requestedPage),
+        logsPageSize: String(ACTIVITY_PAGE_SIZE),
+        logsStatus: activityStatusFilter,
+        logsSort: activitySortOrder,
+        logsCampaignId: activityCampaignFilter,
       })
 
-      const data = (await response.json().catch(() => null)) as
-        | FundRaiserEmailsResponse
-        | { error?: string }
-        | null
-
-      if (!response.ok || !data || !("currentUser" in data)) {
-        throw new Error((data && "error" in data && data.error) || "Unable to load email workflows right now.")
+      if (activityOnly) {
+        setIsRefreshingActivity(true)
+      } else {
+        setIsLoadingEmailData(true)
       }
+      setEmailDataError("")
 
-      setCurrentFundRaiserUser(data.currentUser)
-      setCampaignsData(Array.isArray(data.campaigns) ? data.campaigns : [])
-      setDonationsData(Array.isArray(data.donations) ? data.donations : [])
-      setDirectoryUsers(Array.isArray(data.users) ? data.users : [])
-      setRules(Array.isArray(data.rules) && data.rules.length > 0 ? data.rules : defaultEmailAutomationController.createDefaultRules())
-      setTemplates(Array.isArray(data.templates) && data.templates.length > 0 ? data.templates : defaultEmailAutomationController.createDefaultTemplates())
-      setActivityLogs(Array.isArray(data.logs) ? data.logs : [])
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to load email workflows right now."
-      setEmailDataError(message)
-      toast({
-        title: "Unable to load email automation",
-        description: message,
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoadingEmailData(false)
-    }
-  }, [])
+      try {
+        const response = await fetch(`/api/fund-raiser/emails?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+        })
+
+        const data = (await response.json().catch(() => null)) as
+          | FundRaiserEmailsResponse
+          | { error?: string }
+          | null
+
+        if (!response.ok || !data || !("currentUser" in data)) {
+          throw new Error((data && "error" in data && data.error) || "Unable to load email workflows right now.")
+        }
+
+        const nextLogsMeta: EmailLogsMeta = data.logsMeta || {
+          page: requestedPage,
+          pageSize: ACTIVITY_PAGE_SIZE,
+          totalCount: Array.isArray(data.logs) ? data.logs.length : 0,
+          totalPages: 1,
+          status: activityStatusFilter,
+          sort: activitySortOrder,
+          campaignId: activityCampaignFilter,
+        }
+
+        setCurrentFundRaiserUser(data.currentUser)
+        setCampaignsData(Array.isArray(data.campaigns) ? data.campaigns : [])
+        setDonationsData(Array.isArray(data.donations) ? data.donations : [])
+        setDirectoryUsers(Array.isArray(data.users) ? data.users : [])
+        setRules(Array.isArray(data.rules) && data.rules.length > 0 ? data.rules : defaultEmailAutomationController.createDefaultRules())
+        setTemplates(Array.isArray(data.templates) && data.templates.length > 0 ? data.templates : defaultEmailAutomationController.createDefaultTemplates())
+        setActivityLogs(Array.isArray(data.logs) ? data.logs : [])
+        setActivityMeta(nextLogsMeta)
+        setActivityPage(nextLogsMeta.page)
+        hasLoadedEmailDataRef.current = true
+
+        if (options?.showToast) {
+          toast({
+            title: "Email activity refreshed",
+            description: "The latest workflow email activity has been loaded.",
+          })
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to load email workflows right now."
+        if (!activityOnly) {
+          setEmailDataError(message)
+        }
+        toast({
+          title: activityOnly ? "Unable to refresh email activity" : "Unable to load email automation",
+          description: message,
+          variant: "destructive",
+        })
+      } finally {
+        if (activityOnly) {
+          setIsRefreshingActivity(false)
+        } else {
+          setIsLoadingEmailData(false)
+        }
+      }
+    },
+    [activityCampaignFilter, activityPage, activitySortOrder, activityStatusFilter]
+  )
 
   const persistWorkflowChange = useCallback(async (payload: Record<string, unknown>) => {
     const response = await fetch("/api/fund-raiser/emails", {
@@ -288,7 +354,7 @@ export default function FundRaiserEmailsPage() {
   const selectedSegment = dashboard.selectedSegment
   const automaticAudience = selectedWorkflow?.audiencePreview
   const selectedTrigger = selectedWorkflow?.triggerSummary
-  const isCoachingWorkflow = selectedWorkflow?.rule.key === "fundraiser_coaching"
+  const isFundRaiserAlertWorkflow = selectedWorkflow?.rule.key === "new_donation_alert"
 
   useEffect(() => {
     const hasSelectedCampaign = dashboard.fundRaiserCampaigns.some((campaign) => campaign.id === selectedCampaignId)
@@ -307,7 +373,7 @@ export default function FundRaiserEmailsPage() {
   }, [selectedWorkflow?.template?.ruleKey, selectedWorkflow?.template?.subjectTemplate, selectedWorkflow?.template?.bodyTemplate])
 
   useEffect(() => {
-    if (!selectedWorkflow?.template || isCoachingWorkflow) {
+    if (!selectedWorkflow?.template) {
       return
     }
 
@@ -334,7 +400,6 @@ export default function FundRaiserEmailsPage() {
     selectedWorkflow?.template,
     templateSubject,
     templateBody,
-    isCoachingWorkflow,
   ])
 
   useEffect(() => {
@@ -643,14 +708,11 @@ export default function FundRaiserEmailsPage() {
 
   const activityCampaignOptions = useMemo(
     () =>
-      Array.from(
-        new Map(
-          groupedActivityLogs
-            .filter((log) => log.campaignTitle)
-            .map((log) => [log.campaignId || log.campaignTitle || "unknown", { id: log.campaignId || log.campaignTitle || "unknown", title: log.campaignTitle || "No campaign" }])
-        ).values()
-      ),
-    [groupedActivityLogs]
+      dashboard.fundRaiserCampaigns.map((campaign) => ({
+        id: campaign.id,
+        title: campaign.title,
+      })),
+    [dashboard.fundRaiserCampaigns]
   )
 
   const filteredGroupedActivityLogs = useMemo(() => {
@@ -671,15 +733,13 @@ export default function FundRaiserEmailsPage() {
     return filtered
   }, [groupedActivityLogs, activityStatusFilter, activityCampaignFilter, activitySortOrder])
 
-  const visibleGroupedActivityLogs = useMemo(
-    () => filteredGroupedActivityLogs.slice(0, visibleActivityGroups),
-    [filteredGroupedActivityLogs, visibleActivityGroups]
-  )
+  const visibleGroupedActivityLogs = filteredGroupedActivityLogs
+  const firstActivityRecord = activityMeta.totalCount === 0 ? 0 : (activityMeta.page - 1) * activityMeta.pageSize + 1
+  const lastActivityRecord = Math.min(activityMeta.page * activityMeta.pageSize, activityMeta.totalCount)
 
   useEffect(() => {
-    setVisibleActivityGroups(10)
     setExpandedActivityRows([])
-  }, [activityStatusFilter, activityCampaignFilter, activitySortOrder])
+  }, [activityStatusFilter, activityCampaignFilter, activitySortOrder, activityPage, activityLogs])
 
   const toggleActivityRow = (groupId: string) => {
     setExpandedActivityRows((current) =>
@@ -687,10 +747,24 @@ export default function FundRaiserEmailsPage() {
     )
   }
 
+  const handleActivityStatusFilterChange = (value: string) => {
+    setActivityPage(1)
+    setActivityStatusFilter(value as "all" | EmailLogSummary["status"])
+  }
+
+  const handleActivityCampaignFilterChange = (value: string) => {
+    setActivityPage(1)
+    setActivityCampaignFilter(value)
+  }
+
+  const handleActivitySortOrderChange = (value: string) => {
+    setActivityPage(1)
+    setActivitySortOrder(value as "newest" | "oldest")
+  }
+
   const automaticActionsDisabled =
     isLoadingEmailData || !selectedWorkflow?.rule.isEnabled || !selectedTrigger?.isReadyNow || !selectedWorkflow?.template
   const hasTemplateChanges =
-    !isCoachingWorkflow &&
     Boolean(selectedWorkflow?.template) &&
     (templateSubject !== (selectedWorkflow?.template?.subjectTemplate || "") ||
       templateBody !== (selectedWorkflow?.template?.bodyTemplate || ""))
@@ -847,15 +921,15 @@ export default function FundRaiserEmailsPage() {
         </div>
       </div>
 
-      {isCoachingWorkflow ? (
+      {isFundRaiserAlertWorkflow ? (
         <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-          Fundraising coaching prompts are generated by the system from campaign activity and are not manually edited here.
+          New donation alerts are sent automatically to the logged-in fund raiser when a completed donation is received.
         </div>
       ) : null}
 
       <div className="space-y-2">
         <label className="text-sm font-medium">Subject template</label>
-        <Input value={templateSubject} onChange={(event) => setTemplateSubject(event.target.value)} readOnly={isCoachingWorkflow} />
+        <Input value={templateSubject} onChange={(event) => setTemplateSubject(event.target.value)} />
       </div>
       
 
@@ -865,7 +939,7 @@ export default function FundRaiserEmailsPage() {
           value={templateBody}
           onChange={(event) => setTemplateBody(event.target.value)}
           rows={10}
-          readOnly={isCoachingWorkflow}
+         
         />
       </div>
 
@@ -873,7 +947,7 @@ export default function FundRaiserEmailsPage() {
         Supported placeholders: <code>{"{{campaignTitle}}"}</code>, <code>{"{{raisedAmount}}"}</code>, <code>{"{{targetAmount}}"}</code>, <code>{"{{donorCount}}"}</code>, <code>{"{{milestonePercent}}"}</code>, <code>{"{{fundRaiserName}}"}</code>, <code>{"{{recipientLabel}}"}</code>, <code>{"{{campaignUpdateTitle}}"}</code>, <code>{"{{campaignUpdateContent}}"}</code>, <code>{"{{campaignUpdateDate}}"}</code>
       </div>
 
-      {!isCoachingWorkflow && templateSaveState.message ? (
+      {templateSaveState.message ? (
         <div
           className={`rounded-lg border p-3 text-sm ${
             templateSaveState.type === "saved"
@@ -904,9 +978,7 @@ export default function FundRaiserEmailsPage() {
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        {!isCoachingWorkflow ? (
-          <>
-            <Button type="button" onClick={handleSaveTemplate} disabled={!hasTemplateChanges || templateSaveState.type === "saving"} className="cursor-pointer disabled:cursor-not-allowed">
+        <Button type="button" onClick={handleSaveTemplate} disabled={!hasTemplateChanges || templateSaveState.type === "saving"} className="cursor-pointer disabled:cursor-not-allowed">
               <Save className="mr-2 h-4 w-4" />
               {templateSaveState.type === "saving"
                 ? "Saving..."
@@ -914,12 +986,10 @@ export default function FundRaiserEmailsPage() {
                 ? "Saved"
                 : "Save template"}
             </Button>
-            <Button type="button" variant="outline" onClick={handleResetTemplate} className="cursor-pointer disabled:cursor-not-allowed">
-              <PencilLine className="mr-2 h-4 w-4" />
-              Reset default
-            </Button>
-          </>
-        ) : null}
+        <Button type="button" variant="outline" onClick={handleResetTemplate} className="cursor-pointer disabled:cursor-not-allowed">
+          <PencilLine className="mr-2 h-4 w-4" />
+          Reset default
+        </Button>
         <Button type="button" variant="outline" onClick={handleQuickTest} className="cursor-pointer disabled:cursor-not-allowed">
           <Mail className="mr-2 h-4 w-4" />
           Quick test
@@ -1099,18 +1169,31 @@ export default function FundRaiserEmailsPage() {
           </div>
         )}
 
-        <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <div className="grid gap-6 xl:grid-cols-[1.5fr_0.5fr]">
           <Card>
-            <CardHeader>
-              <CardTitle>Email activity</CardTitle>
-              <CardDescription>
-                Recent workflow tests and sent emails from both the automatic and manual sections.
-              </CardDescription>
+            <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>Email activity</CardTitle>
+                <CardDescription>
+                  Recent workflow tests and sent emails from both the automatic and manual sections.
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => refreshEmailsDashboard({ activityOnly: true, showToast: true })}
+                disabled={isLoadingEmailData || isRefreshingActivity}
+                className="cursor-pointer disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshingActivity ? "animate-spin" : ""}`} />
+                {isRefreshingActivity ? "Refreshing..." : "Refresh"}
+              </Button>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <Select value={activityStatusFilter} onValueChange={(value) => setActivityStatusFilter(value as "all" | EmailLogSummary["status"])}>
+                  <Select value={activityStatusFilter} onValueChange={handleActivityStatusFilterChange}>
                     <SelectTrigger className="cursor-pointer">
                       <SelectValue placeholder="Filter by status" />
                     </SelectTrigger>
@@ -1122,7 +1205,7 @@ export default function FundRaiserEmailsPage() {
                     </SelectContent>
                   </Select>
 
-                  <Select value={activityCampaignFilter} onValueChange={setActivityCampaignFilter}>
+                  <Select value={activityCampaignFilter} onValueChange={handleActivityCampaignFilterChange}>
                     <SelectTrigger className="cursor-pointer">
                       <SelectValue placeholder="Filter by campaign" />
                     </SelectTrigger>
@@ -1136,7 +1219,7 @@ export default function FundRaiserEmailsPage() {
                     </SelectContent>
                   </Select>
 
-                  <Select value={activitySortOrder} onValueChange={(value) => setActivitySortOrder(value as "newest" | "oldest")}>
+                  <Select value={activitySortOrder} onValueChange={handleActivitySortOrderChange}>
                     <SelectTrigger className="cursor-pointer">
                       <SelectValue placeholder="Sort order" />
                     </SelectTrigger>
@@ -1148,11 +1231,19 @@ export default function FundRaiserEmailsPage() {
                 </div>
 
                 <p className="text-sm text-muted-foreground">
-                  Showing {Math.min(visibleGroupedActivityLogs.length, filteredGroupedActivityLogs.length)} of {filteredGroupedActivityLogs.length} email activities
+                  Showing {firstActivityRecord}-{lastActivityRecord} of {activityMeta.totalCount} email log records
                 </p>
               </div>
 
-              <Table>
+              <Table className="table-fixed">
+                <colgroup>
+                  <col className="w-[15%]" />
+                  <col className="w-[21%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[23%]" />
+                  <col className="w-[15%]" />
+                </colgroup>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Workflow</TableHead>
@@ -1176,16 +1267,16 @@ export default function FundRaiserEmailsPage() {
 
                       return [
                         <TableRow key={group.id}>
-                          <TableCell>
-                            <div className="space-y-1">
-                              <p className="font-medium">{group.ruleLabel}</p>
-                              <p className="text-xs text-muted-foreground">{group.ruleKey}</p>
+                          <TableCell className="overflow-hidden align-top">
+                            <div className="min-w-0 space-y-1">
+                              <p className="truncate font-medium" title={group.ruleLabel}>{group.ruleLabel}</p>
+                              <p className="truncate text-xs text-muted-foreground" title={group.ruleKey}>{group.ruleKey}</p>
                             </div>
                           </TableCell>
-                          <TableCell>{group.campaignTitle || "No campaign"}</TableCell>
-                          <TableCell>
-                            <div className="space-y-2">
-                              <p className="font-medium">{group.recipientCount} recipient{group.recipientCount === 1 ? "" : "s"}</p>
+                          <TableCell className="truncate align-top" title={group.campaignTitle || "No campaign"}>{group.campaignTitle || "No campaign"}</TableCell>
+                          <TableCell className="overflow-hidden align-top">
+                            <div className="min-w-0 space-y-2">
+                              <p className="truncate font-medium">{group.recipientCount} recipient{group.recipientCount === 1 ? "" : "s"}</p>
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -1207,13 +1298,13 @@ export default function FundRaiserEmailsPage() {
                               </Button>
                             </div>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="overflow-hidden align-top">
                             <Badge variant={group.status === "sent" ? "default" : group.status === "failed" ? "destructive" : "secondary"}>
                               {group.statusLabel}
                             </Badge>
                           </TableCell>
-                          <TableCell className="max-w-[280px] truncate">{group.subject}</TableCell>
-                          <TableCell>{formatDateTime(group.sentAt)}</TableCell>
+                          <TableCell className="truncate align-top" title={group.subject}>{group.subject}</TableCell>
+                          <TableCell className="whitespace-nowrap align-top text-sm">{formatDateTime(group.sentAt)}</TableCell>
                         </TableRow>,
                         ...(isExpanded
                           ? [
@@ -1239,16 +1330,33 @@ export default function FundRaiserEmailsPage() {
                 </TableBody>
               </Table>
 
-              {filteredGroupedActivityLogs.length > visibleGroupedActivityLogs.length ? (
-                <div className="flex justify-center">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="cursor-pointer"
-                    onClick={() => setVisibleActivityGroups((current) => current + 10)}
-                  >
-                    Show 10 more
-                  </Button>
+              {activityMeta.totalPages > 1 ? (
+                <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Page {activityMeta.page} of {activityMeta.totalPages}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={activityMeta.page <= 1 || isRefreshingActivity}
+                      onClick={() => setActivityPage((current) => Math.max(1, current - 1))}
+                      className="cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={activityMeta.page >= activityMeta.totalPages || isRefreshingActivity}
+                      onClick={() => setActivityPage((current) => Math.min(activityMeta.totalPages, current + 1))}
+                      className="cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </Button>
+                  </div>
                 </div>
               ) : null}
             </CardContent>
