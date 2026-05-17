@@ -36,34 +36,25 @@ type CampaignActivity = {
   nextMilestone: number | null
 }
 
-type DoneeDashboardResponse = {
-  linkedCampaigns?: Array<{
-    id: string
-    title: string
-    summary?: string | null
-    category: string
-    status: string
-    targetAmount: number
-    raisedAmount: number
-    donorCount?: number
-    startDate: string
-    endDate: string
-    coverImage?: string | null
-  }>
-  recommendedCampaigns?: Array<{
-    id: string
-    title: string
-    summary?: string | null
-    category: string
-    status: string
-    targetAmount: number
-    raisedAmount: number
-    donorCount?: number
-    startDate: string
-    endDate: string
-    coverImage?: string | null
-  }>
+type LinkedCampaign = {
+  id: string
+  title: string
+  summary?: string | null
+  category: string
+  status: string
+  targetAmount: number
+  raisedAmount: number
+  donorCount?: number
+  startDate: string
+  endDate: string
+  coverImage?: string | null
 }
+
+type DoneeDashboardResponse = {
+  linkedCampaigns?: LinkedCampaign[]
+}
+
+const REMOVED_CAMPAIGN_TITLE = "Scholarships for Underprivileged Students"
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-US", {
@@ -110,6 +101,8 @@ export default function DoneeMilestonesPage() {
     : undefined
 
   useEffect(() => {
+    let isMounted = true
+
     setLoading(true)
     setError("")
 
@@ -122,34 +115,39 @@ export default function DoneeMilestonesPage() {
         return response.json()
       })
       .then((data: DoneeDashboardResponse) => {
-        const sourceCampaigns =
-          data.linkedCampaigns && data.linkedCampaigns.length > 0
-            ? data.linkedCampaigns
-            : data.recommendedCampaigns ?? []
+        if (!isMounted) return
 
-        const mappedActivities = sourceCampaigns.map((campaign) => {
-          const progress = getProgress(
-            campaign.raisedAmount,
-            campaign.targetAmount
-          )
+        const mappedActivities = (data.linkedCampaigns ?? [])
+          .filter((campaign) => campaign.title !== REMOVED_CAMPAIGN_TITLE)
+          .map((campaign) => {
+            const progress = getProgress(
+              campaign.raisedAmount,
+              campaign.targetAmount
+            )
 
-          return {
-            ...campaign,
-            progress,
-            reachedMilestones: getReachedMilestones(progress),
-            nextMilestone: getNextMilestone(progress),
-          }
-        })
+            return {
+              ...campaign,
+              progress,
+              reachedMilestones: getReachedMilestones(progress),
+              nextMilestone: getNextMilestone(progress),
+            }
+          })
 
         setActivities(mappedActivities)
       })
       .catch(() => {
+        if (!isMounted) return
         setError("Unable to load milestone progress alerts. Please try again.")
         setActivities([])
       })
       .finally(() => {
+        if (!isMounted) return
         setLoading(false)
       })
+
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   const milestoneAlerts = activities.filter(
@@ -337,7 +335,9 @@ export default function DoneeMilestonesPage() {
                           <Badge>Goal completed</Badge>
                         )}
 
-                        <Link href="/dashboard/donee/activities">
+                        <Link
+                          href={`/dashboard/donee/activities?activityId=${activity.id}`}
+                        >
                           <Button variant="outline" size="sm">
                             View Activity
                             <ArrowRight className="h-4 w-4 ml-1" />

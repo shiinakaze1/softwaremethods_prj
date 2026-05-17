@@ -25,41 +25,43 @@ import { DashboardLayout } from "@/components/layout/dashboard-sidebar"
 import { StatsCard } from "@/components/ui/stats-card"
 import { useAuth } from "@/components/providers/session-provider"
 
-interface DashboardStats {
-  totalDonated?: number
-  activeFavourites?: number
-  campaignsSupported?: number
-  thisMonth?: number
-
-  totalReceived?: number
-  linkedActivities?: number
-  supporterCount?: number
-  thisMonthReceived?: number
-  donorMessages?: number
-  milestoneAlerts?: number
+type LinkedCampaign = {
+  id: string
+  title: string
+  category?: string | null
+  targetAmount?: number | null
+  raisedAmount?: number | null
 }
 
-interface RecentActivity {
-  type: "donation" | "favourite" | "message" | "milestone"
-  campaignId: string
-  campaign: string
-  amount: number | null
+type RecentActivity = {
+  type: "donation" | "favourite" | "message" | "milestone" | string
+  campaignId?: string
+  campaign?: string
+  campaignTitle?: string
+  title?: string
+  amount?: number | null
   createdAt: string
 }
 
-interface DashboardData {
-  stats: DashboardStats
-  recentActivity: RecentActivity[]
-  recommendedCampaigns?: unknown[]
-  linkedCampaigns?: unknown[]
-  donorMessages?: unknown[]
+type DonorMessage = {
+  campaignId?: string
+  campaignTitle?: string
+  campaign?: { id?: string; title?: string }
+}
+
+type DashboardData = {
+  recentActivity?: RecentActivity[]
+  linkedCampaigns?: LinkedCampaign[]
+  donorMessages?: DonorMessage[]
   milestoneAlerts?: unknown[]
 }
 
+const REMOVED_CAMPAIGN_TITLE = "Scholarships for Underprivileged Students"
+
 function formatCurrency(amount: number) {
-  return new Intl.NumberFormat("en-AU", {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "AUD",
+    currency: "USD",
     minimumFractionDigits: 0,
   }).format(amount)
 }
@@ -82,17 +84,50 @@ function timeAgo(dateStr: string) {
   return `${days} day${days !== 1 ? "s" : ""} ago`
 }
 
+function getActivityCampaignTitle(activity: RecentActivity) {
+  return (
+    activity.campaignTitle ??
+    activity.campaign ??
+    activity.title?.replace("Donation received for ", "") ??
+    ""
+  )
+}
+
+function getMessageCampaignTitle(message: DonorMessage) {
+  return message.campaign?.title ?? message.campaignTitle ?? ""
+}
+
+function getProgress(raisedAmount?: number | null, targetAmount?: number | null) {
+  if (!targetAmount || targetAmount <= 0) return 0
+  return Math.min(100, Math.round(((raisedAmount ?? 0) / targetAmount) * 100))
+}
+
 export default function DoneeDashboardPage() {
   const { user: sessionUser } = useAuth()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let isMounted = true
+
     fetch("/api/donee/dashboard")
       .then((response) => response.json())
-      .then((dashboardData) => setData(dashboardData))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false))
+      .then((dashboardData) => {
+        if (!isMounted) return
+        setData(dashboardData)
+      })
+      .catch(() => {
+        if (!isMounted) return
+        setData(null)
+      })
+      .finally(() => {
+        if (!isMounted) return
+        setLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   const firstName = sessionUser?.firstName || "Donee"
@@ -105,33 +140,41 @@ export default function DoneeDashboardPage() {
       }
     : undefined
 
-  /**
-   * Some older API fields are still donor-style:
-   * totalDonated, campaignsSupported, thisMonth.
-   *
-   * We map them into Donee wording here so the UI matches the Donee role
-   * without breaking the existing API route.
-   */
-  const totalReceived =
-    data?.stats?.totalReceived ?? data?.stats?.totalDonated ?? 0
+  const linkedCampaigns = (data?.linkedCampaigns ?? []).filter(
+    (campaign) => campaign.title !== REMOVED_CAMPAIGN_TITLE
+  )
 
-  const linkedActivities =
-    data?.stats?.linkedActivities ?? data?.stats?.campaignsSupported ?? 0
+  const recentActivity = (data?.recentActivity ?? []).filter(
+    (activity) => getActivityCampaignTitle(activity) !== REMOVED_CAMPAIGN_TITLE
+  )
 
-  const thisMonthReceived =
-    data?.stats?.thisMonthReceived ?? data?.stats?.thisMonth ?? 0
+  const donationActivity = recentActivity.filter(
+    (activity) => activity.type === "donation"
+  )
 
-  const supporterCount =
-    data?.stats?.supporterCount ??
-    data?.recentActivity?.filter((activity) => activity.type === "donation")
-      .length ??
+  const donorMessages = (data?.donorMessages ?? []).filter(
+    (message) => getMessageCampaignTitle(message) !== REMOVED_CAMPAIGN_TITLE
+  )
+
+  const totalReceived = donationActivity.reduce(
+    (sum, activity) => sum + Number(activity.amount ?? 0),
     0
+  )
 
-  const donorMessageCount =
-    data?.stats?.donorMessages ?? data?.donorMessages?.length ?? 0
+  const thisMonthReceived = donationActivity
+    .filter(
+      (activity) =>
+        new Date(activity.createdAt) >
+        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    )
+    .reduce((sum, activity) => sum + Number(activity.amount ?? 0), 0)
 
-  const milestoneAlertCount =
-    data?.stats?.milestoneAlerts ?? data?.milestoneAlerts?.length ?? 0
+  const linkedActivities = linkedCampaigns.length
+  const supporterCount = donationActivity.length
+  const donorMessageCount = donorMessages.length
+  const milestoneAlertCount = linkedCampaigns.filter(
+    (campaign) => getProgress(campaign.raisedAmount, campaign.targetAmount) >= 25
+  ).length
 
   return (
     <DashboardLayout role="donee" user={sidebarUser}>
@@ -151,7 +194,6 @@ export default function DoneeDashboardPage() {
         </div>
       ) : (
         <>
-          {/* Stats Grid */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <StatsCard
               title="Total Received"
@@ -182,7 +224,6 @@ export default function DoneeDashboardPage() {
             />
           </div>
 
-          {/* Quick Actions and Recent Activity */}
           <div className="grid lg:grid-cols-3 gap-6 mb-8">
             <Card className="lg:col-span-1">
               <CardHeader>
@@ -233,7 +274,9 @@ export default function DoneeDashboardPage() {
             <Card className="lg:col-span-2">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle className="text-lg">Recent Support Activity</CardTitle>
+                  <CardTitle className="text-lg">
+                    Recent Support Activity
+                  </CardTitle>
                   <CardDescription>
                     Latest donations and updates from fundraising activities
                     linked to you.
@@ -249,15 +292,15 @@ export default function DoneeDashboardPage() {
               </CardHeader>
 
               <CardContent>
-                {(data?.recentActivity ?? []).length === 0 ? (
+                {recentActivity.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-8">
                     No support activity has been recorded yet.
                   </p>
                 ) : (
                   <div className="space-y-4">
-                    {(data?.recentActivity ?? []).map((activity, index) => (
+                    {recentActivity.map((activity, index) => (
                       <div
-                        key={`${activity.campaignId}-${index}`}
+                        key={`${activity.campaignId ?? "activity"}-${index}`}
                         className="flex items-center gap-4 pb-4 border-b border-border last:border-0 last:pb-0"
                       >
                         <div className="w-10 h-10 rounded-full flex items-center justify-center bg-primary/10 text-primary">
@@ -279,7 +322,7 @@ export default function DoneeDashboardPage() {
                                 : activity.type === "milestone"
                                   ? "Milestone reached for"
                                   : "Activity on"}{" "}
-                            {activity.campaign}
+                            {getActivityCampaignTitle(activity)}
                           </p>
 
                           <p className="text-sm text-muted-foreground">
@@ -287,9 +330,9 @@ export default function DoneeDashboardPage() {
                           </p>
                         </div>
 
-                        {activity.amount !== null && (
+                        {activity.amount !== null && activity.amount !== undefined && (
                           <Badge variant="secondary" className="font-semibold">
-                            {formatCurrency(activity.amount)}
+                            {formatCurrency(Number(activity.amount))}
                           </Badge>
                         )}
                       </div>
@@ -300,7 +343,6 @@ export default function DoneeDashboardPage() {
             </Card>
           </div>
 
-          {/* Donee Use Case Summary */}
           <section className="grid md:grid-cols-3 gap-6">
             <Card>
               <CardHeader>
@@ -336,9 +378,7 @@ export default function DoneeDashboardPage() {
               </CardHeader>
 
               <CardContent>
-                <p className="text-3xl font-bold mb-4">
-                  {linkedActivities}
-                </p>
+                <p className="text-3xl font-bold mb-4">{linkedActivities}</p>
                 <Link href="/dashboard/donee/reports">
                   <Button variant="outline" className="w-full justify-between">
                     View Report
