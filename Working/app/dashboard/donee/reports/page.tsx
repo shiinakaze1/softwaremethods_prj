@@ -1,14 +1,15 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Download,
   FileText,
   DollarSign,
-  Users,
   Target,
   CheckCircle,
   AlertCircle,
+  Loader2,
+  HandHeart,
 } from "lucide-react"
 import { DashboardLayout } from "@/components/layout/dashboard-sidebar"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,8 +24,40 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { campaigns, donations } from "@/lib/mock-data"
 import { useAuth } from "@/components/providers/session-provider"
+
+type LinkedCampaign = {
+  id: string
+  title: string
+  summary?: string | null
+  category?: string | null
+  status?: string | null
+  targetAmount?: number | null
+  raisedAmount?: number | null
+  donorCount?: number | null
+  startDate?: string | null
+  endDate?: string | null
+}
+
+type ReportRow = {
+  id: string
+  title: string
+  category: string
+  status: string
+  targetAmount: number
+  raisedAmount: number
+  progress: number
+}
+
+type DoneeDashboardResponse = {
+  linkedCampaigns?: LinkedCampaign[]
+}
+
+const REMOVED_CAMPAIGN_KEYWORD = "scholarship"
+
+function isRemovedCampaign(title?: string | null) {
+  return (title ?? "").toLowerCase().includes(REMOVED_CAMPAIGN_KEYWORD)
+}
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-US", {
@@ -32,6 +65,11 @@ function formatCurrency(amount: number) {
     currency: "USD",
     minimumFractionDigits: 0,
   }).format(amount)
+}
+
+function getProgress(raisedAmount: number, targetAmount: number) {
+  if (!targetAmount || targetAmount <= 0) return 0
+  return Math.min(100, Math.round((raisedAmount / targetAmount) * 100))
 }
 
 function downloadCSV(filename: string, rows: string[][]) {
@@ -59,6 +97,9 @@ function downloadCSV(filename: string, rows: string[][]) {
 
 export default function DoneeReportsPage() {
   const { user } = useAuth()
+  const [reportRows, setReportRows] = useState<ReportRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
   const [downloaded, setDownloaded] = useState(false)
 
   const sidebarUser = user
@@ -69,46 +110,56 @@ export default function DoneeReportsPage() {
       }
     : undefined
 
-  // Demo data: fundraising support report linked to this Donee.
-  // Later, replace this with real API data filtered by Donee/beneficiary ID.
-  const linkedCampaigns = campaigns.slice(0, 4)
+  useEffect(() => {
+    let isMounted = true
 
-  const reportRows = useMemo(() => {
-    return linkedCampaigns.map((campaign) => {
-      const campaignDonations = donations.filter(
-        (donation) => donation.campaignId === campaign.id
-      )
+    setLoading(true)
+    setError("")
 
-      const totalReceived = campaignDonations.reduce(
-        (sum, donation) => sum + donation.amount,
-        0
-      )
+    fetch("/api/donee/dashboard")
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Failed to load report data.")
+        }
 
-      const successfulDonations = campaignDonations.filter(
-        (donation) => donation.status === "completed"
-      ).length
+        return response.json()
+      })
+      .then((data: DoneeDashboardResponse) => {
+        if (!isMounted) return
 
-      const progress = campaign.targetAmount
-        ? Math.min(
-            100,
-            Math.round((campaign.raisedAmount / campaign.targetAmount) * 100)
-          )
-        : 0
+        const rows = (data.linkedCampaigns ?? [])
+          .filter((campaign) => !isRemovedCampaign(campaign.title))
+          .map((campaign) => {
+            const targetAmount = Number(campaign.targetAmount ?? 0)
+            const raisedAmount = Number(campaign.raisedAmount ?? 0)
 
-      return {
-        id: campaign.id,
-        title: campaign.title,
-        category: campaign.category,
-        status: campaign.status,
-        targetAmount: campaign.targetAmount,
-        raisedAmount: campaign.raisedAmount,
-        totalReceived,
-        donationCount: campaignDonations.length,
-        successfulDonations,
-        progress,
-      }
-    })
-  }, [linkedCampaigns])
+            return {
+              id: campaign.id,
+              title: campaign.title,
+              category: campaign.category ?? "General",
+              status: campaign.status ?? "active",
+              targetAmount,
+              raisedAmount,
+              progress: getProgress(raisedAmount, targetAmount),
+            }
+          })
+
+        setReportRows(rows)
+      })
+      .catch(() => {
+        if (!isMounted) return
+        setError("Unable to load fundraising support report. Please try again.")
+        setReportRows([])
+      })
+      .finally(() => {
+        if (!isMounted) return
+        setLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const totalRaised = reportRows.reduce(
     (sum, row) => sum + row.raisedAmount,
@@ -117,11 +168,6 @@ export default function DoneeReportsPage() {
 
   const totalTarget = reportRows.reduce(
     (sum, row) => sum + row.targetAmount,
-    0
-  )
-
-  const totalDonations = reportRows.reduce(
-    (sum, row) => sum + row.donationCount,
     0
   )
 
@@ -141,8 +187,6 @@ export default function DoneeReportsPage() {
         "Target Amount",
         "Raised Amount",
         "Progress Percentage",
-        "Donation Count",
-        "Successful Donations",
       ],
       ...reportRows.map((row) => [
         row.title,
@@ -151,8 +195,6 @@ export default function DoneeReportsPage() {
         String(row.targetAmount),
         String(row.raisedAmount),
         `${row.progress}%`,
-        String(row.donationCount),
-        String(row.successfulDonations),
       ]),
     ]
 
@@ -179,129 +221,151 @@ export default function DoneeReportsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      {loading ? (
+        <div className="flex items-center justify-center py-24">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : error ? (
         <Card>
-          <CardContent className="p-5">
-            <DollarSign className="h-5 w-5 text-primary mb-3" />
-            <p className="text-2xl font-bold">{formatCurrency(totalRaised)}</p>
-            <p className="text-sm text-muted-foreground">Total Raised</p>
+          <CardContent className="py-16 text-center">
+            <AlertCircle className="h-10 w-10 mx-auto mb-4 text-destructive" />
+            <h3 className="text-lg font-semibold mb-2">
+              Failed to load report
+            </h3>
+            <p className="text-muted-foreground">{error}</p>
           </CardContent>
         </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <Card>
+              <CardContent className="p-5">
+                <DollarSign className="h-5 w-5 text-primary mb-3" />
+                <p className="text-2xl font-bold">
+                  {formatCurrency(totalRaised)}
+                </p>
+                <p className="text-sm text-muted-foreground">Total Raised</p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardContent className="p-5">
-            <Target className="h-5 w-5 text-primary mb-3" />
-            <p className="text-2xl font-bold">{formatCurrency(totalTarget)}</p>
-            <p className="text-sm text-muted-foreground">Total Goal</p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardContent className="p-5">
+                <Target className="h-5 w-5 text-primary mb-3" />
+                <p className="text-2xl font-bold">
+                  {formatCurrency(totalTarget)}
+                </p>
+                <p className="text-sm text-muted-foreground">Total Goal</p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardContent className="p-5">
-            <Users className="h-5 w-5 text-primary mb-3" />
-            <p className="text-2xl font-bold">{totalDonations}</p>
-            <p className="text-sm text-muted-foreground">Received Donations</p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardContent className="p-5">
+                <HandHeart className="h-5 w-5 text-primary mb-3" />
+                <p className="text-2xl font-bold">{reportRows.length}</p>
+                <p className="text-sm text-muted-foreground">
+                  Linked Activities
+                </p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardContent className="p-5">
-            <FileText className="h-5 w-5 text-primary mb-3" />
-            <p className="text-2xl font-bold">{averageProgress}%</p>
-            <p className="text-sm text-muted-foreground">Average Progress</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <CardTitle>Support Summary</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Review fundraising progress before downloading the CSV report.
-            </p>
+            <Card>
+              <CardContent className="p-5">
+                <FileText className="h-5 w-5 text-primary mb-3" />
+                <p className="text-2xl font-bold">{averageProgress}%</p>
+                <p className="text-sm text-muted-foreground">
+                  Average Progress
+                </p>
+              </CardContent>
+            </Card>
           </div>
 
-          <Button onClick={handleDownload}>
-            <Download className="h-4 w-4 mr-2" />
-            Download CSV
-          </Button>
-        </CardHeader>
+          <Card>
+            <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle>Support Summary</CardTitle>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Review linked fundraising activity progress before downloading
+                  the CSV report.
+                </p>
+              </div>
 
-        <CardContent>
-          {reportRows.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Fundraising Activity</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Raised</TableHead>
-                  <TableHead className="text-right">Goal</TableHead>
-                  <TableHead>Progress</TableHead>
-                  <TableHead className="text-right">Donations</TableHead>
-                </TableRow>
-              </TableHeader>
+              <Button onClick={handleDownload} disabled={reportRows.length === 0}>
+                <Download className="h-4 w-4 mr-2" />
+                Download CSV
+              </Button>
+            </CardHeader>
 
-              <TableBody>
-                {reportRows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="font-medium max-w-[260px]">
-                      {row.title}
-                    </TableCell>
+            <CardContent>
+              {reportRows.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Fundraising Activity</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Raised</TableHead>
+                      <TableHead className="text-right">Goal</TableHead>
+                      <TableHead>Progress</TableHead>
+                    </TableRow>
+                  </TableHeader>
 
-                    <TableCell>
-                      <Badge variant="outline">{row.category}</Badge>
-                    </TableCell>
+                  <TableBody>
+                    {reportRows.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-medium max-w-[320px]">
+                          {row.title}
+                        </TableCell>
 
-                    <TableCell>
-                      <Badge
-                        variant={
-                          row.status === "active" ? "default" : "secondary"
-                        }
-                      >
-                        {row.status}
-                      </Badge>
-                    </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{row.category}</Badge>
+                        </TableCell>
 
-                    <TableCell className="text-right font-semibold">
-                      {formatCurrency(row.raisedAmount)}
-                    </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              row.status === "active" ? "default" : "secondary"
+                            }
+                          >
+                            {row.status}
+                          </Badge>
+                        </TableCell>
 
-                    <TableCell className="text-right">
-                      {formatCurrency(row.targetAmount)}
-                    </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {formatCurrency(row.raisedAmount)}
+                        </TableCell>
 
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Progress value={row.progress} className="h-2 w-24" />
-                        <span className="text-xs text-muted-foreground">
-                          {row.progress}%
-                        </span>
-                      </div>
-                    </TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(row.targetAmount)}
+                        </TableCell>
 
-                    <TableCell className="text-right">
-                      {row.donationCount}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <div className="py-16 text-center">
-              <AlertCircle className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
-              <h3 className="text-lg font-semibold mb-2">
-                No report available
-              </h3>
-              <p className="text-muted-foreground">
-                No fundraising activities are currently linked to your Donee
-                account.
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Progress value={row.progress} className="h-2 w-24" />
+                            <span className="text-xs text-muted-foreground">
+                              {row.progress}%
+                            </span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="py-16 text-center">
+                  <AlertCircle className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">
+                    No report available
+                  </h3>
+                  <p className="text-muted-foreground">
+                    No fundraising activities are currently linked to your Donee
+                    account.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
     </DashboardLayout>
   )
 }
