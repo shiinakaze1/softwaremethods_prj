@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import {
   AlertCircle,
@@ -215,7 +215,7 @@ function groupEmailActivity(
   return Array.from(grouped.values())
 }
 
-export default function FundRaiserEmailsPage() {
+function FundRaiserEmailsPageContent() {
   const searchParams = useSearchParams()
   const initialSegment = searchParams.get("segment")
   const initialCampaignId = searchParams.get("campaignId") || ""
@@ -1594,4 +1594,12 @@ export default function FundRaiserEmailsPage() {
       </div>
     </DashboardLayout>
   )
+}
+
+export default function FundRaiserEmailsPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading email dashboard...</div>}>
+      <FundRaiserEmailsPageContent />
+    </Suspense>
+  );
 }

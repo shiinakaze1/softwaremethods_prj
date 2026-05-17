@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-export default function LinkDonationPage() {
+function LinkDonationContent() {
   const searchParams = useSearchParams();
 
   const [donorEmail, setDonorEmail] = useState(
@@ -119,5 +119,13 @@ export default function LinkDonationPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function LinkDonationPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading donation page...</div>}>
+      <LinkDonationContent />
+    </Suspense>
   );
 }
